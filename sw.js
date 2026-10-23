@@ -1,7 +1,7 @@
 // Service Worker des Dashboards: haelt nur die App-Huelle (Seite, Manifest, Icons) vor, damit die
 // installierte App sofort startet. Daten aus Supabase werden NIE zwischengespeichert - die Anfragen
 // gehen an eine andere Adresse und laufen hier gar nicht durch den Cache.
-const CACHE = 'startrace-dashboard-v1';
+const CACHE = 'startrace-dashboard-v2';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'icon-180.png'];
 
 self.addEventListener('install', (e) => {

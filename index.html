@@ -96,7 +96,7 @@ tr.click:hover td { background: var(--surface-2); }
 .badge.ok { background: var(--good-bg); color: var(--good-ink); }
 a.chip { color: var(--accent-ink); cursor: pointer; text-decoration: none; font-family: var(--mono); font-size: 12px; }
 a.chip:hover { text-decoration: underline; }
-.msg { max-width: 640px; overflow-wrap: anywhere; color: var(--ink-2); }
+.msg { max-width: 640px; overflow-wrap: break-word; color: var(--ink-2); }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .filters input[type=search] { flex: 1 1 200px; min-width: 0; }
 #login { max-width: 460px; margin: 32px auto; }
@@ -152,6 +152,22 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
   #reload { order: 1; } #install { order: 2; } #logout { order: 3; }
   #range { order: 4; flex: 1 1 100%; display: flex; }
   #range button { flex: 1; padding: 6px 4px; }
+  /* Tabellen als Kartenzeilen: kurze Angaben nebeneinander, langer Text (.wide) darunter ueber die
+   * volle Breite. Vorher teilten sich 5-10 Spalten 360 px, und Text brach nach jedem Buchstaben um. */
+  .scroll { max-height: none; overflow: visible; }
+  table.cards, table.cards tbody { display: block; }
+  table.cards thead { display: none; }
+  table.cards tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; padding: 10px 2px; border-bottom: 1px solid var(--grid); }
+  table.cards td { display: block; border: 0; padding: 0; text-align: left; max-width: 100%; }
+  table.cards td.num { text-align: left; }
+  table.cards td.wide { flex: 1 1 100%; order: 9; max-width: none; color: var(--ink); }
+  table.cards td.lead { font-weight: 600; }
+  table.cards td[data-l]::before { content: attr(data-l) " "; color: var(--muted); font-size: 12px; }
+  table.cards td.empty { flex: 1 1 100%; }
+  table.cards td.opt { display: none; }
+  /* Balkenlisten: Name ganz ueber dem Balken statt abgeschnitten daneben */
+  .hbar { grid-template-columns: 1fr 44px; gap: 2px 8px; margin: 8px 0; }
+  .hbar .name { grid-column: 1 / -1; white-space: normal; overflow: visible; }
   .bar .status { width: 100%; order: 9; }
   #logout .lbl { display: none; }
   #logout .ico { display: inline; }
@@ -252,7 +268,7 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
         <select id="fc-status"><option value="">Aktiv und passiv</option><option value="Active">Nur aktiv</option></select>
         <input type="search" id="fc-text" placeholder="Code oder Text suchen…">
       </div>
-      <div class="scroll"><table id="fc-table"></table></div>
+      <div class="scroll"><table id="fc-table" class="cards"></table></div>
     </div>
   </section>
 
@@ -262,7 +278,7 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
       <h2>Fahrzeuge</h2>
       <p class="sub">Je FIN (ohne gültige FIN: je Gerät) – Steuergeräte, Softwarestand und aktuelle Fehler. Klick öffnet die Identifikation.</p>
       <div class="filters"><input type="search" id="veh-text" placeholder="FIN, Teile- oder Seriennummer suchen…"></div>
-      <div class="scroll"><table id="veh-table"></table></div>
+      <div class="scroll"><table id="veh-table" class="cards"></table></div>
     </div>
   </section>
 
@@ -271,7 +287,7 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
     <div class="card" style="margin-bottom:16px">
       <h2>Routinen</h2>
       <p class="sub">Starts, Abbrüche durch Vorbedingungen und Ergebnisse</p>
-      <div class="scroll"><table id="rt-table"></table></div>
+      <div class="scroll"><table id="rt-table" class="cards"></table></div>
     </div>
     <div class="grid two">
       <div class="card">
@@ -288,7 +304,7 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
     <div class="card">
       <h2>Parameter geschrieben</h2>
       <p class="sub">Jeder Schreibvorgang mit Steuergerät und Ergebnis</p>
-      <div class="scroll"><table id="pw-table"></table></div>
+      <div class="scroll"><table id="pw-table" class="cards"></table></div>
     </div>
   </section>
 
@@ -297,7 +313,7 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
     <div class="card">
       <h2>Geräte</h2>
       <p class="sub">Je Chip-ID – Klick öffnet die Einträge dieses Geräts im Protokoll</p>
-      <div class="scroll"><table id="devices"></table></div>
+      <div class="scroll"><table id="devices" class="cards"></table></div>
     </div>
   </section>
 
@@ -306,7 +322,7 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
     <div class="card" style="margin-bottom:16px">
       <h2>Fehlermeldungen</h2>
       <p class="sub">Gleiche Meldungen (Zahlen ausgeblendet) zusammengefasst</p>
-      <div class="scroll"><table id="messages"></table></div>
+      <div class="scroll"><table id="messages" class="cards"></table></div>
     </div>
     <div class="card">
       <h2>Ereignisprotokoll</h2>
@@ -317,7 +333,7 @@ pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font
         <input type="search" id="flt-text" placeholder="Text suchen…">
         <button class="ghost" id="csv">CSV</button>
       </div>
-      <div class="scroll"><table id="events"></table></div>
+      <div class="scroll"><table id="events" class="cards"></table></div>
       <p class="status" id="events-note"></p>
     </div>
   </section>
@@ -672,8 +688,8 @@ function renderFaults() {
     .sort((a, b) => b.vehicles.size - a.vehicles.size || b.active - a.active || a.code.localeCompare(b.code));
   $('fc-table').innerHTML = '<thead><tr><th>Steuergerät</th><th>Code</th><th>Beschreibung</th><th class="num">Fahrzeuge</th><th class="num">Aktiv</th><th class="num opt">Geräte</th><th class="opt">Zuletzt</th></tr></thead><tbody>' +
     (list.length ? list.map(t => `<tr class="click" data-open="dtc:${esc(t.ecu + '|' + t.code)}">
-      <td>${esc(t.ecu)}</td><td class="mono">${esc(t.code)}</td><td class="msg">${esc(t.title.replace(new RegExp('^' + t.code + '\\s*'), ''))}</td>
-      <td class="num">${fmt(t.vehicles.size)}</td><td class="num">${t.active ? '<span class="badge error">' + fmt(t.active) + '</span>' : '0'}</td>
+      <td class="lead">${esc(t.ecu)}</td><td class="mono lead">${esc(t.code)}</td><td class="msg wide">${esc(t.title.replace(new RegExp('^' + t.code + '\\s*'), ''))}</td>
+      <td class="num" data-l="Fahrzeuge">${fmt(t.vehicles.size)}</td><td class="num" data-l="Aktiv">${t.active ? '<span class="badge error">' + fmt(t.active) + '</span>' : '0'}</td>
       <td class="num opt">${fmt(t.devices.size)}</td><td class="mono opt">${esc(wall(t.last))}</td></tr>`).join('')
       : '<tr><td colspan="7" class="empty">Keine Fehlercodes – die Geräte melden den Fehlerspeicher ab Software 1.1.22</td></tr>') + '</tbody>';
 }
@@ -689,8 +705,8 @@ function renderVehicles() {
       const ecus = [...new Set([...Object.keys(v.ident || {}), ...v.faults.keys()])];
       const act = [...v.faults.values()].reduce((s, f) => s + f.dtcs.filter(x => x.status === 'Active').length, 0);
       return `<tr class="click" data-open="veh:${esc(v.key)}">
-        <td class="mono">${esc(v.key)}</td><td>${esc(ecus.join(', ') || '–')}</td>
-        <td class="num">${act ? '<span class="badge error">' + fmt(act) + '</span>' : '0'}</td>
+        <td class="mono lead">${esc(v.key)}</td><td>${esc(ecus.join(', ') || '–')}</td>
+        <td class="num" data-l="Aktive Fehler">${act ? '<span class="badge error">' + fmt(act) + '</span>' : '0'}</td>
         <td class="opt msg">${esc(ecus.map(e => swOf(v, e) && e + ' ' + swOf(v, e)).filter(Boolean).join(' · ') || '–')}</td>
         <td class="opt mono">${esc([...v.devices].join(', '))}</td><td class="mono">${esc(wall(v.last))}</td></tr>`;
     }).join('') : '<tr><td colspan="6" class="empty">Noch keine Fahrzeugdaten – ab Software 1.1.22</td></tr>') + '</tbody>';
@@ -700,10 +716,10 @@ function renderRoutines() {
   const m = model;
   const list = [...m.routines.values()].sort((a, b) => (b.starts + b.blocked) - (a.starts + a.blocked));
   $('rt-table').innerHTML = '<thead><tr><th>Routine</th><th>Steuergerät</th><th class="num">Gestartet</th><th class="num">Gesperrt</th><th class="num">Ergebnis ok</th><th class="num">Ergebnis Fehler</th><th class="num opt">Gestoppt</th><th class="num opt">Geräte</th><th class="opt">Zuletzt</th></tr></thead><tbody>' +
-    (list.length ? list.map(t => `<tr><td>${esc(t.routine)}</td><td>${esc(t.ecu)}</td><td class="num">${fmt(t.starts)}</td>
-      <td class="num">${t.blocked ? '<span class="badge blocked">' + fmt(t.blocked) + '</span>' : '0'}</td>
-      <td class="num">${t.finishedOk ? '<span class="badge ok">' + fmt(t.finishedOk) + '</span>' : '0'}</td>
-      <td class="num">${t.finishedFail + t.rejected ? '<span class="badge fail">' + fmt(t.finishedFail + t.rejected) + '</span>' : '0'}</td>
+    (list.length ? list.map(t => `<tr><td class="lead">${esc(t.routine)}</td><td>${esc(t.ecu)}</td><td class="num" data-l="Gestartet">${fmt(t.starts)}</td>
+      <td class="num" data-l="Gesperrt">${t.blocked ? '<span class="badge blocked">' + fmt(t.blocked) + '</span>' : '0'}</td>
+      <td class="num" data-l="ok">${t.finishedOk ? '<span class="badge ok">' + fmt(t.finishedOk) + '</span>' : '0'}</td>
+      <td class="num" data-l="Fehler">${t.finishedFail + t.rejected ? '<span class="badge fail">' + fmt(t.finishedFail + t.rejected) + '</span>' : '0'}</td>
       <td class="num opt">${fmt(t.stops)}</td><td class="num opt">${fmt(t.devices.size)}</td><td class="mono opt">${esc(wall(t.last))}</td></tr>`).join('')
       : '<tr><td colspan="9" class="empty">Keine Routinen im Zeitraum</td></tr>') + '</tbody>';
   hbars($('rt-blockers'), [...m.blockers.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10), false, 'Keine gesperrten Starts');
@@ -714,7 +730,7 @@ function renderRoutines() {
   const w = [...m.writes].reverse();
   $('pw-table').innerHTML = '<thead><tr><th>Zeit</th><th>Gerät</th><th>Steuergerät</th><th>Parameter</th><th>Ergebnis</th><th class="opt">Fahrzeug</th></tr></thead><tbody>' +
     (w.length ? w.slice(0, 300).map(x => `<tr><td class="mono">${esc(wall(x.ts))}</td><td><a class="chip" data-chip="${esc(x.chip)}">${esc(x.chip)}</a></td><td>${esc(x.ecu)}</td>
-      <td class="msg">${esc(x.parameter)}</td><td><span class="badge ${x.result === 'ok' ? 'ok' : 'fail'}">${esc(RESULT[x.result] || x.result)}</span></td><td class="mono opt">${esc(x.vehicle)}</td></tr>`).join('')
+      <td class="msg wide">${esc(x.parameter)}</td><td><span class="badge ${x.result === 'ok' ? 'ok' : 'fail'}">${esc(RESULT[x.result] || x.result)}</span></td><td class="mono opt">${esc(x.vehicle)}</td></tr>`).join('')
       : '<tr><td colspan="6" class="empty">Keine Schreibvorgänge im Zeitraum</td></tr>') + '</tbody>';
 }
 
@@ -722,12 +738,12 @@ function renderDevices() {
   const devs = [...model.devices.values()].sort((a, b) => (b.last || '').localeCompare(a.last || ''));
   $('devices').innerHTML = '<thead><tr><th>Chip-ID</th><th>Software</th><th>Lizenz</th><th>Zuletzt</th><th class="num">Starts</th><th class="num">Fehler</th><th class="num opt">Fahrzeuge</th><th class="opt">Bedienung</th><th class="opt">Letzter Fehler</th></tr></thead><tbody>' +
     (devs.length ? devs.map(d => `<tr class="click" data-chip="${esc(d.chip)}">
-      <td><a class="chip" data-chip="${esc(d.chip)}">${esc(d.chip)}</a></td><td class="mono">${esc(d.sw || '–')}</td><td>${esc(d.license || '–')}</td>
-      <td class="mono">${esc(wall(d.last))}</td><td class="num">${fmt(d.starts)}</td>
-      <td class="num">${d.errors ? '<span class="badge error">' + fmt(d.errors) + '</span>' : '0'}</td>
+      <td class="lead"><a class="chip" data-chip="${esc(d.chip)}">${esc(d.chip)}</a></td><td class="mono">${esc(d.sw || '–')}</td><td>${esc(d.license || '–')}</td>
+      <td class="mono">${esc(wall(d.last))}</td><td class="num" data-l="Starts">${fmt(d.starts)}</td>
+      <td class="num" data-l="Fehler">${d.errors ? '<span class="badge error">' + fmt(d.errors) + '</span>' : '0'}</td>
       <td class="num opt">${fmt(d.vehicles.size)}</td>
       <td class="opt msg">${esc([d.phone && d.phone + '× Handy', d.desktop && d.desktop + '× PC', d.workshopWifi && d.workshopWifi + '× Werkstatt-WLAN', d.deviceWifi && d.deviceWifi + '× Geräte-WLAN'].filter(Boolean).join(' · ') || '–')}</td>
-      <td class="opt msg">${d.lastError ? '<span class="mono">' + esc(wall(d.lastError.timestamp)) + '</span> ' + esc(d.lastError.text.slice(0, 120)) : '–'}</td></tr>`).join('')
+      <td class="msg${d.lastError ? ' wide' : ' opt'}">${d.lastError ? '<span class="mono">' + esc(wall(d.lastError.timestamp)) + '</span> ' + esc(d.lastError.text.slice(0, 120)) : '–'}</td></tr>`).join('')
       : '<tr><td colspan="9" class="empty">Keine Geräte im Zeitraum</td></tr>') + '</tbody>';
 }
 
@@ -737,7 +753,7 @@ function renderLog() {
   for (const r of errors) { const s = signature(r.text); const e = sig.get(s) || { n: 0, chips: new Set(), last: r, type: area(r.logtype) }; e.n++; e.chips.add(r.chip_id); if (r.timestamp > e.last.timestamp) e.last = r; sig.set(s, e); }
   const sigs = [...sig.values()].sort((a, b) => b.n - a.n).slice(0, 100);
   $('messages').innerHTML = '<thead><tr><th class="num">Anzahl</th><th class="num">Geräte</th><th>Bereich</th><th>Meldung (Beispiel)</th><th class="opt">Zuletzt</th></tr></thead><tbody>' +
-    (sigs.length ? sigs.map(e => `<tr><td class="num">${fmt(e.n)}</td><td class="num">${e.chips.size}</td><td>${esc(e.type)}</td><td class="msg">${esc(e.last.text.slice(0, 300))}</td><td class="mono opt">${esc(wall(e.last.timestamp))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Keine Fehler im Zeitraum</td></tr>') + '</tbody>';
+    (sigs.length ? sigs.map(e => `<tr><td class="num" data-l="Anzahl">${fmt(e.n)}</td><td class="num" data-l="Geräte">${e.chips.size}</td><td class="lead">${esc(e.type)}</td><td class="msg wide">${esc(e.last.text.slice(0, 300))}</td><td class="mono opt">${esc(wall(e.last.timestamp))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Keine Fehler im Zeitraum</td></tr>') + '</tbody>';
   fill($('flt-chip'), 'Alle Geräte', [...model.devices.keys()].sort());
   fill($('flt-type'), 'Alle Typen', [...new Set(rows.map(r => r.logtype))].sort());
   renderEvents();
@@ -755,7 +771,7 @@ function renderEvents() {
   const list = filtered();
   const shown = list.slice(0, 500);
   $('events').innerHTML = '<thead><tr><th>Zeit (MEZ)</th><th>Gerät</th><th class="opt">Level</th><th>Typ</th><th>Inhalt</th></tr></thead><tbody>' +
-    (shown.length ? shown.map(r => `<tr${r.ev ? ` class="click" data-open="ev:${r.i}"` : ''}><td class="mono">${esc(wall(r.timestamp))}</td><td><a class="chip" data-chip="${esc(r.chip_id)}">${esc(r.chip_id)}</a></td><td class="opt"><span class="badge ${esc(r.level)}">${esc(r.level)}</span></td><td>${esc(area(r.logtype))}</td><td class="msg">${esc(r.text.slice(0, 400))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Keine Einträge</td></tr>') + '</tbody>';
+    (shown.length ? shown.map(r => `<tr${r.ev ? ` class="click" data-open="ev:${r.i}"` : ''}><td class="mono">${esc(wall(r.timestamp))}</td><td><a class="chip" data-chip="${esc(r.chip_id)}">${esc(r.chip_id)}</a></td><td class="opt"><span class="badge ${esc(r.level)}">${esc(r.level)}</span></td><td class="lead">${esc(area(r.logtype))}</td><td class="msg wide">${esc(r.text.slice(0, 400))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Keine Einträge</td></tr>') + '</tbody>';
   $('events-note').textContent = list.length > 500 ? `Zeige 500 von ${fmt(list.length)} – Filter eingrenzen oder CSV exportieren.` : `${fmt(list.length)} Einträge`;
 }
 
