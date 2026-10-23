@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>StarTrace Dashboard</title>
+<meta name="theme-color" content="#1c5cab">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="StarTrace">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<!--
+  Dashboard ueber die Geraete-Logs in Supabase (Tabelle StartraceNextGenLogs), docs/logging-konzept.md.
+  Wertet die strukturierten Ereignisse aus (JSON in "message": Session Start, Vehicle Identification,
+  Fault Memory Snapshot, Fault Codes Cleared, Parameter Write, Routine, Feature Usage, Client Error)
+  und die aelteren Texteintraege (Startup Message, ErrorMessage: ..., DiagData: ...).
+  Anmeldung mit einem Supabase-Konto, das in tools/supabase/dashboard_access.sql freigegeben ist.
+  Installierbar als App (PWA), sobald die Seite ueber https ausgeliefert wird - siehe README.md.
+  Keine externen Bibliotheken. Eintraege vom Typ "Config.json" werden bewusst NICHT geladen.
+-->
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f3f2ee;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --series: #2a78d6; --series-hover: #1c5cab;
+  --critical: #d03b3b; --warning: #fab219; --good: #0ca30c; --good-ink: #006300;
+  --critical-bg: #fde8e8; --warning-bg: #fff4dc; --info-bg: #e8f1fc; --good-bg: #e3f6e3;
+  --accent: #2a78d6; --accent-ink: #1c5cab;
+  --radius: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series: #3987e5; --series-hover: #6da7ec; --good-ink: #3fbf3f; --accent-ink: #6da7ec;
+    --critical-bg: #3a1b1b; --warning-bg: #3a2e12; --info-bg: #15263b; --good-bg: #16301a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #232321;
+  --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --series: #3987e5; --series-hover: #6da7ec; --good-ink: #3fbf3f; --accent-ink: #6da7ec;
+  --critical-bg: #3a1b1b; --warning-bg: #3a2e12; --info-bg: #15263b; --good-bg: #16301a;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 var(--font); }
+header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--border);
+         padding: calc(10px + env(safe-area-inset-top)) 16px 0; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; max-width: 1280px; margin: 0 auto; }
+.bar h1 { font-size: 17px; margin: 0 auto 0 0; display: flex; align-items: center; gap: 8px; }
+.bar h1 img { width: 26px; height: 26px; border-radius: 6px; }
+nav.tabs { display: flex; gap: 2px; overflow-x: auto; max-width: 1280px; margin: 8px auto 0; scrollbar-width: none; }
+nav.tabs::-webkit-scrollbar { display: none; }
+nav.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 9px 12px; white-space: nowrap; color: var(--ink-2); }
+nav.tabs button[aria-selected="true"] { color: var(--accent-ink); border-bottom-color: var(--accent); font-weight: 600; }
+main { max-width: 1280px; margin: 0 auto; padding: 16px 16px calc(48px + env(safe-area-inset-bottom)); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-width: 0; }
+.card h2 { font-size: 15px; margin: 0 0 4px; }
+.card .sub { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+.grid { display: grid; gap: 16px; margin-bottom: 16px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.two { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+.kpi .label { color: var(--ink-2); font-size: 12px; }
+.kpi .value { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.kpi .note { color: var(--muted); font-size: 12px; }
+button, select, input { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+button.ghost { background: transparent; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: transparent; padding: 6px 10px; }
+.seg button[aria-pressed="true"] { background: var(--surface-2); font-weight: 600; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--surface); z-index: 1; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--surface-2); }
+.mono { font-family: var(--mono); font-size: 12px; }
+.scroll { max-height: 520px; overflow: auto; -webkit-overflow-scrolling: touch; }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.badge.error, .badge.fail { background: var(--critical-bg); color: var(--critical); }
+.badge.warning, .badge.blocked { background: var(--warning-bg); color: var(--ink); }
+.badge.info { background: var(--info-bg); color: var(--ink-2); }
+.badge.ok { background: var(--good-bg); color: var(--good-ink); }
+a.chip { color: var(--accent-ink); cursor: pointer; text-decoration: none; font-family: var(--mono); font-size: 12px; }
+a.chip:hover { text-decoration: underline; }
+.msg { max-width: 640px; overflow-wrap: anywhere; color: var(--ink-2); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.filters input[type=search] { flex: 1 1 200px; min-width: 0; }
+#login { max-width: 460px; margin: 32px auto; }
+#login label { display: block; font-size: 12px; color: var(--ink-2); margin: 10px 0 4px; }
+#login input:not([type=checkbox]) { width: 100%; }
+#login .check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--ink-2); }
+#login .err { color: var(--critical); margin-top: 10px; min-height: 1.2em; }
+.status { color: var(--muted); font-size: 12px; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.chart .bar { fill: var(--series); }
+.chart .bar.err { fill: var(--critical); }
+.chart .gridline { stroke: var(--grid); stroke-width: 1; }
+.chart .axis { stroke: var(--axis); stroke-width: 1; }
+.chart text { fill: var(--muted); font-size: 11px; font-family: var(--font); }
+.chart .hit.on + .bar, .chart .bar.on { fill: var(--series-hover); }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; display: none; z-index: 30; }
+.tip b { font-variant-numeric: tabular-nums; }
+.empty { color: var(--muted); padding: 24px 0; text-align: center; }
+.hbar { display: grid; grid-template-columns: minmax(110px, 38%) 1fr 52px; align-items: center; gap: 8px; margin: 5px 0; font-size: 13px; }
+.hbar .track { height: 14px; border-radius: 0 4px 4px 0; background: var(--series); min-width: 2px; }
+.hbar .track.err { background: var(--critical); }
+.hbar .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.hbar .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hidden { display: none !important; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--ink-2); margin-bottom: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+/* Detailansicht: rechte Seitenleiste, auf dem Handy volle Breite */
+#detail { position: fixed; inset: 0; z-index: 20; display: flex; justify-content: flex-end; background: rgba(0,0,0,.35); }
+#detail .panel { width: min(760px, 100%); height: 100%; overflow: auto; background: var(--page); box-shadow: -6px 0 24px rgba(0,0,0,.2);
+                 padding: calc(14px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)); }
+#detail .head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+#detail .head h2 { margin: 0; font-size: 17px; flex: 1; overflow-wrap: anywhere; }
+#detail .card { margin-bottom: 12px; }
+dl.kv { display: grid; grid-template-columns: minmax(120px, 42%) 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+dl.kv dt { color: var(--ink-2); overflow-wrap: anywhere; }
+dl.kv dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+details.occ { border-top: 1px solid var(--grid); padding: 8px 0; }
+details.occ summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+details.occ dl { margin-top: 10px; }
+pre.json { background: var(--surface-2); border-radius: 8px; padding: 10px; font: 12px/1.4 var(--mono); overflow: auto; max-height: 320px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.install { display: none; }
+#logout .ico { display: none; }
+@media (max-width: 600px) {
+  header { padding-left: 12px; padding-right: 12px; }
+  main { padding-left: 12px; padding-right: 12px; }
+  .two { grid-template-columns: 1fr; }
+  .kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .kpi .value { font-size: 22px; }
+  .card { padding: 12px; }
+  .opt { display: none; }
+  /* Kopfzeile: Logo, Aktualisieren, Abmelden - darunter der Zeitraum ueber die volle Breite */
+  #reload { order: 1; } #install { order: 2; } #logout { order: 3; }
+  #range { order: 4; flex: 1 1 100%; display: flex; }
+  #range button { flex: 1; padding: 6px 4px; }
+  .bar .status { width: 100%; order: 9; }
+  #logout .lbl { display: none; }
+  #logout .ico { display: inline; }
+  .bar h1 img { width: 24px; height: 24px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1><img src="icon-192.png" alt="">StarTrace</h1>
+    <div class="seg" id="range" role="group" aria-label="Zeitraum">
+      <button data-days="7">7 T</button>
+      <button data-days="30" aria-pressed="true">30 T</button>
+      <button data-days="90">90 T</button>
+      <button data-days="0">Alles</button>
+    </div>
+    <button class="ghost" id="reload" title="Neu laden">↻</button>
+    <button class="ghost install" id="install">App installieren</button>
+    <button class="ghost" id="logout" title="Abmelden" aria-label="Abmelden"><span class="lbl">Abmelden</span><span class="ico" aria-hidden="true">⏻</span></button>
+    <span class="status" id="status"></span>
+  </div>
+  <nav class="tabs hidden" id="tabs" role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">Übersicht</button>
+    <button role="tab" data-tab="faults">Fehlercodes</button>
+    <button role="tab" data-tab="vehicles">Fahrzeuge</button>
+    <button role="tab" data-tab="routines">Routinen &amp; Parameter</button>
+    <button role="tab" data-tab="devices">Geräte</button>
+    <button role="tab" data-tab="log">Protokoll</button>
+  </nav>
+</header>
+
+<section id="login" class="card hidden">
+  <h2>Anmelden</h2>
+  <p class="sub">Supabase-Konto, das in <span class="mono">tools/supabase/dashboard_access.sql</span> freigegeben ist.</p>
+  <label for="f-url">Supabase-URL</label>
+  <input id="f-url" value="https://hluwqnvwiexynejhbwah.supabase.co" autocomplete="off">
+  <label for="f-key">Anon-Key (öffentlicher Schlüssel, aus config.json → BacklogConnection)</label>
+  <input id="f-key" autocomplete="off" placeholder="eyJ…">
+  <label for="f-mail">E-Mail</label>
+  <input id="f-mail" type="email" autocomplete="username">
+  <label for="f-pass">Passwort</label>
+  <input id="f-pass" type="password" autocomplete="current-password">
+  <label class="check"><input type="checkbox" id="f-keep" checked> Auf diesem Gerät angemeldet bleiben</label>
+  <p><button class="primary" id="do-login">Anmelden</button></p>
+  <div class="err" id="login-err"></div>
+</section>
+
+<main id="app" class="hidden">
+  <!-- ======================= Uebersicht ======================= -->
+  <section data-view="overview">
+    <div class="grid kpis" id="kpis"></div>
+    <div class="grid two">
+      <div class="card">
+        <h2>Gerätestarts pro Tag</h2>
+        <p class="sub">Seite am Gerät geöffnet mit Internet („Startup Message“)</p>
+        <div class="chart" id="chart-starts"></div>
+      </div>
+      <div class="card">
+        <h2>Fehler pro Tag</h2>
+        <p class="sub">Einträge mit Level „error“ (Software, Verbindung, Diagnose)</p>
+        <div class="chart" id="chart-errors"></div>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h2>Genutzte Funktionen</h2>
+        <p class="sub">Aufrufe und Vorgänge im Zeitraum</p>
+        <div id="features"></div>
+      </div>
+      <div class="card">
+        <h2>Häufigste Fehlercodes</h2>
+        <p class="sub">Anzahl Fahrzeuge mit diesem Code (letzter Stand je Fahrzeug) – Klick zeigt Details</p>
+        <div id="top-dtcs"></div>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h2>Softwarestände</h2>
+        <p class="sub">Geräte nach zuletzt gemeldeter Version</p>
+        <div id="versions"></div>
+      </div>
+      <div class="card">
+        <h2>Häufigste Probleme</h2>
+        <p class="sub">Fehler nach Bereich</p>
+        <div id="problems"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================= Fehlercodes ======================= -->
+  <section data-view="faults" class="hidden">
+    <div class="card" style="margin-bottom:16px">
+      <h2>Fehlercodes im Feld</h2>
+      <p class="sub">Je Steuergerät und Code: wie viele Fahrzeuge ihn zuletzt gemeldet haben, wie oft aktiv. Klick öffnet alle Fälle mit Umgebungsdaten.</p>
+      <div class="filters">
+        <select id="fc-ecu"><option value="">Alle Steuergeräte</option></select>
+        <select id="fc-status"><option value="">Aktiv und passiv</option><option value="Active">Nur aktiv</option></select>
+        <input type="search" id="fc-text" placeholder="Code oder Text suchen…">
+      </div>
+      <div class="scroll"><table id="fc-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ======================= Fahrzeuge ======================= -->
+  <section data-view="vehicles" class="hidden">
+    <div class="card" style="margin-bottom:16px">
+      <h2>Fahrzeuge</h2>
+      <p class="sub">Je FIN (ohne gültige FIN: je Gerät) – Steuergeräte, Softwarestand und aktuelle Fehler. Klick öffnet die Identifikation.</p>
+      <div class="filters"><input type="search" id="veh-text" placeholder="FIN, Teile- oder Seriennummer suchen…"></div>
+      <div class="scroll"><table id="veh-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ======================= Routinen & Parameter ======================= -->
+  <section data-view="routines" class="hidden">
+    <div class="card" style="margin-bottom:16px">
+      <h2>Routinen</h2>
+      <p class="sub">Starts, Abbrüche durch Vorbedingungen und Ergebnisse</p>
+      <div class="scroll"><table id="rt-table"></table></div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h2>Häufigste nicht erfüllte Vorbedingungen</h2>
+        <p class="sub">Warum Routinen nicht starten konnten</p>
+        <div id="rt-blockers"></div>
+      </div>
+      <div class="card">
+        <h2>Fehlercodes gelöscht</h2>
+        <p class="sub">Vorgänge „Fehlercodes löschen“</p>
+        <div id="clears"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Parameter geschrieben</h2>
+      <p class="sub">Jeder Schreibvorgang mit Steuergerät und Ergebnis</p>
+      <div class="scroll"><table id="pw-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ======================= Geraete ======================= -->
+  <section data-view="devices" class="hidden">
+    <div class="card">
+      <h2>Geräte</h2>
+      <p class="sub">Je Chip-ID – Klick öffnet die Einträge dieses Geräts im Protokoll</p>
+      <div class="scroll"><table id="devices"></table></div>
+    </div>
+  </section>
+
+  <!-- ======================= Protokoll ======================= -->
+  <section data-view="log" class="hidden">
+    <div class="card" style="margin-bottom:16px">
+      <h2>Fehlermeldungen</h2>
+      <p class="sub">Gleiche Meldungen (Zahlen ausgeblendet) zusammengefasst</p>
+      <div class="scroll"><table id="messages"></table></div>
+    </div>
+    <div class="card">
+      <h2>Ereignisprotokoll</h2>
+      <div class="filters">
+        <select id="flt-chip"><option value="">Alle Geräte</option></select>
+        <select id="flt-level"><option value="">Alle Level</option><option>error</option><option>warning</option><option>info</option></select>
+        <select id="flt-type"><option value="">Alle Typen</option></select>
+        <input type="search" id="flt-text" placeholder="Text suchen…">
+        <button class="ghost" id="csv">CSV</button>
+      </div>
+      <div class="scroll"><table id="events"></table></div>
+      <p class="status" id="events-note"></p>
+    </div>
+  </section>
+</main>
+
+<div id="detail" class="hidden" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+  <div class="panel">
+    <div class="head"><h2 id="detail-title"></h2><button class="ghost" id="detail-close" aria-label="Schließen">✕</button></div>
+    <div id="detail-body"></div>
+  </div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+'use strict';
+const TABLE = 'StartraceNextGenLogs';
+const LS = 'startrace-dashboard';
+const $ = (id) => document.getElementById(id);
+let cfg = {};
+try { cfg = JSON.parse(localStorage.getItem(LS) || '{}'); } catch (_) {}
+let session = null;
+let rows = [];
+let model = null;
+let days = cfg.days ?? 30;
+
+function save() { try { localStorage.setItem(LS, JSON.stringify(cfg)); } catch (_) {} }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function plain(s) { return String(s ?? '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim(); }
+// Zeitstempel sind vom Geraet als MEZ/MESZ-Wandzeit gespeichert (mit "Z") - daher wortwoertlich anzeigen.
+function wall(ts) { return String(ts || '').replace('T', ' ').slice(0, 16); }
+function day(ts) { return String(ts || '').slice(0, 10); }
+function fmt(n) { return Number(n).toLocaleString('de-DE'); }
+function plural(n, one, many) { return fmt(n) + ' ' + (n === 1 ? one : many); }
+const ECU_ORDER = ['CPC', 'MCM', 'ACM', 'IMOVCU', 'TCM'];
+
+// ---------------------------------------------------------------- Anmeldung
+function sessionStore() { return cfg.keep ? localStorage : sessionStorage; }
+async function login(url, key, email, password) {
+  const r = await fetch(url.replace(/\/$/, '') + '/auth/v1/token?grant_type=password', {
+    method: 'POST', headers: { apikey: key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error_description || j.msg || ('Anmeldung fehlgeschlagen (' + r.status + ')'));
+  return { url: url.replace(/\/$/, ''), key, token: j.access_token, refresh: j.refresh_token, expires: Date.now() + (j.expires_in || 3600) * 1000 };
+}
+async function refresh() {
+  if (!session || Date.now() < session.expires - 60000) return;
+  const r = await fetch(session.url + '/auth/v1/token?grant_type=refresh_token', {
+    method: 'POST', headers: { apikey: session.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: session.refresh })
+  });
+  if (!r.ok) { logout(); throw new Error('Sitzung abgelaufen – bitte neu anmelden'); }
+  const j = await r.json();
+  session.token = j.access_token; session.refresh = j.refresh_token; session.expires = Date.now() + (j.expires_in || 3600) * 1000;
+  try { sessionStore().setItem(LS + '-s', JSON.stringify(session)); } catch (_) {}
+}
+function logout() {
+  session = null;
+  try { sessionStorage.removeItem(LS + '-s'); localStorage.removeItem(LS + '-s'); } catch (_) {}
+  $('app').classList.add('hidden'); $('tabs').classList.add('hidden'); $('login').classList.remove('hidden');
+}
+
+// ---------------------------------------------------------------- Laden
+async function load() {
+  await refresh();
+  $('status').textContent = 'Lade …';
+  const all = [];
+  const from = days ? new Date(Date.now() - days * 864e5).toISOString().slice(0, 10) : null;
+  const base = session.url + '/rest/v1/' + TABLE +
+    '?select=timestamp,level,chip_id,logtype,message' +
+    '&logtype=neq.Config.json' +           // enthaelt (in alten Eintraegen) WLAN-Zugangsdaten - nie laden
+    (from ? '&timestamp=gte.' + from : '') +
+    '&order=timestamp.desc';
+  const page = 1000;
+  for (let off = 0; ; off += page) {
+    const r = await fetch(base, { headers: {
+      apikey: session.key, Authorization: 'Bearer ' + session.token,
+      Range: off + '-' + (off + page - 1), 'Range-Unit': 'items'
+    }});
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error('Abfrage fehlgeschlagen (' + r.status + '): ' + t.slice(0, 200));
+    }
+    const chunk = await r.json();
+    all.push(...chunk);
+    $('status').textContent = 'Lade … ' + fmt(all.length);
+    if (chunk.length < page || all.length >= 50000) break;
+  }
+  rows = all.map((x, i) => Object.assign(parseRow(x), { i }));
+  $('status').textContent = fmt(rows.length) + ' Einträge' + (all.length >= 50000 ? ' (gekappt)' : '') + ' · ' + new Date().toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'});
+  model = buildModel(rows);
+  render();
+}
+
+// ---------------------------------------------------------------- Ereignisse lesen
+// Neue Ereignisse: message = {v, session, sw, lang, data}. Aeltere: Klartext.
+function parseRow(x) {
+  const r = { timestamp: x.timestamp || '', level: (x.level || 'info').toLowerCase(), chip_id: String(x.chip_id || '–'), logtype: x.logtype || '–' };
+  const m = x.message;
+  let ev = null;
+  if (m && typeof m === 'object' && 'data' in m) ev = m;
+  else if (typeof m === 'string' && m.charAt(0) === '{') {
+    try { const o = JSON.parse(m); if (o && typeof o === 'object' && 'data' in o && 'v' in o) ev = o; } catch (_) {}
+  }
+  r.ev = ev;
+  r.data = ev ? (ev.data || {}) : null;
+  r.session = ev ? ev.session : null;
+  const sw = ev ? ev.sw : (String(m || '').match(/software (\d+\.\d+\.\d+)/i) || [])[1];
+  r.sw = sw || null;
+  r.raw = typeof m === 'string' ? m : JSON.stringify(m);
+  r.text = ev ? summarize(r) : plain(m);
+  return r;
+}
+const ACTION = { start: 'Start', stop: 'Stopp', finished: 'Ende', blocked: 'gesperrt' };
+const RESULT = { ok: 'ok', blocked: 'Vorbedingung nicht erfüllt', rejected: 'abgelehnt', failed: 'fehlgeschlagen', error: 'Fehler' };
+function vehicleLabel(v) {
+  if (!v || v === 'novin') return 'ohne FIN';
+  if (typeof v === 'object') return v.vin || v.id || 'ohne FIN';
+  return v;
+}
+function summarize(r) {
+  const d = r.data || {};
+  try {
+    switch (r.logtype) {
+      case 'Session Start':
+        return ['Sitzung', d.license && 'Lizenz ' + d.license, d.device === 'phone' ? 'Handy' : d.device === 'desktop' ? 'PC' : d.device,
+                d.connection === 'device-wifi' ? 'Geräte-WLAN' : d.connection === 'workshop-wifi' ? 'Werkstatt-WLAN' : d.connection,
+                (d.ecus || []).map(e => e.ecu + ' ' + (e.detected || '?')).join(', ')].filter(Boolean).join(' · ');
+      case 'Vehicle Identification':
+        return 'FIN ' + vehicleLabel(d.vehicle) + ' · ' + Object.keys(d.ecus || {}).join(', ');
+      case 'Fault Memory Snapshot': {
+        const e = (d.ecus || [])[0] || {};
+        const act = (e.dtcs || []).filter(x => x.status === 'Active').length;
+        return (e.ecu || '?') + ': ' + (e.error ? 'nicht lesbar (' + e.error + ')' : plural((e.dtcs || []).length, 'Fehlercode', 'Fehlercodes') + ', ' + act + ' aktiv') +
+               (d.parts ? ' · Teil ' + d.part + '/' + d.parts : '') + ' · ' + vehicleLabel(d.vehicle);
+      }
+      case 'Fault Codes Cleared': {
+        const before = (d.before || []).reduce((s, e) => s + (e.active || 0) + (e.passive || 0), 0);
+        return (d.kind === 'emission' ? 'Abgasrelevante Fehler gelöscht' : 'Alle Fehlercodes gelöscht') + (d.ok ? ' · ok: ' + String(d.ok).trim() : '') +
+               (d.failed ? ' · fehlgeschlagen: ' + String(d.failed).trim() : '') + ' · vorher ' + before;
+      }
+      case 'Parameter Write':
+        return (d.ecu || '?') + ' · ' + (d.parameter || '') + ' · ' + (RESULT[d.result] || d.result || '');
+      case 'Routine':
+        return (d.routine || '') + ' · ' + (d.ecu || '') + ' · ' + (ACTION[d.action] || d.action || '') + ' · ' + (RESULT[d.result] || d.result || '') +
+               (d.failed && d.failed.length ? ' (' + d.failed.join('; ') + ')' : '') + (d.status != null ? ' · Status ' + d.status : '');
+      case 'Feature Usage': {
+        const pages = Object.entries(d.pages || {}).map(([k, v]) => k + ' ' + v).join(', ');
+        return ['Seiten: ' + (pages || '–'), d.liveData ? 'Live-Daten ' + d.liveData : '', d.trafficSessions ? 'CAN ' + d.trafficSeconds + ' s' : '',
+                d.recordings ? 'Aufnahmen ' + d.recordings : '', d.reports ? 'Berichte ' + d.reports : ''].filter(Boolean).join(' · ');
+      }
+      case 'Client Error':
+        return plain(d.message || d.error || JSON.stringify(d)) + (d.source ? ' (' + d.source + ')' : '');
+      default:
+        return plain(JSON.stringify(d)).slice(0, 300);
+    }
+  } catch (_) { return plain(JSON.stringify(d)).slice(0, 300); }
+}
+
+// ---------------------------------------------------------------- Auswertung
+function buildModel(rows) {
+  const asc = [...rows].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const m = { devices: new Map(), vehicles: new Map(), dtcs: new Map(), routines: new Map(), blockers: new Map(),
+              writes: [], clears: [], usage: { pages: {}, liveData: 0, liveDataValues: {}, trafficSessions: 0, trafficSeconds: 0, recordings: 0, reports: 0, languageSwitches: 0 } };
+  const dev = (chip) => {
+    let d = m.devices.get(chip);
+    if (!d) m.devices.set(chip, d = { chip, first: null, last: null, sw: null, license: null, sessions: 0, starts: 0, errors: 0, lastError: null,
+                                      phone: 0, desktop: 0, deviceWifi: 0, workshopWifi: 0, vehicles: new Set(), events: 0, writes: 0, routines: 0 });
+    return d;
+  };
+  const vehKey = (v, chip) => {
+    const label = vehicleLabel(v);
+    return label === 'ohne FIN' ? 'Gerät ' + chip + ' (ohne FIN)' : label;
+  };
+  const veh = (key) => {
+    let v = m.vehicles.get(key);
+    if (!v) m.vehicles.set(key, v = { key, vin: key.startsWith('Gerät ') ? null : key, wmi: null, devices: new Set(), first: null, last: null, ident: {}, identTs: null, faults: new Map(), sessions: 0 });
+    return v;
+  };
+  // Teile einer Momentaufnahme (gleiche Sitzung, Steuergeraet, Fahrzeug) zusammenfuehren
+  const snapParts = new Map();
+  for (const r of asc) {
+    const d = dev(r.chip_id);
+    d.events++;
+    if (!d.first) d.first = r.timestamp;
+    d.last = r.timestamp;
+    if (r.sw) d.sw = r.sw;
+    if (r.level === 'error') { d.errors++; d.lastError = r; }
+    if (r.logtype === 'Startup Message') d.starts++;
+    const x = r.data;
+    if (!x) continue;
+    switch (r.logtype) {
+      case 'Session Start':
+        d.sessions++;
+        if (x.license) d.license = x.license;
+        if (x.device === 'phone') d.phone++; else if (x.device) d.desktop++;
+        if (x.connection === 'device-wifi') d.deviceWifi++; else if (x.connection) d.workshopWifi++;
+        break;
+      case 'Vehicle Identification': {
+        const v = veh(vehKey(x.vehicle, r.chip_id));
+        if (x.vehicle && typeof x.vehicle === 'object' && x.vehicle.wmi) v.wmi = x.vehicle.wmi;
+        v.devices.add(r.chip_id); v.sessions++;
+        if (!v.first) v.first = r.timestamp; v.last = r.timestamp;
+        v.ident = x.ecus || {}; v.identTs = r.timestamp;
+        d.vehicles.add(v.key);
+        break;
+      }
+      case 'Fault Memory Snapshot': {
+        const e = (x.ecus || [])[0];
+        if (!e) break;
+        const key = r.chip_id + '|' + (r.session || r.timestamp) + '|' + e.ecu + '|' + vehKey(x.vehicle, r.chip_id);
+        let s = snapParts.get(key);
+        if (!s) snapParts.set(key, s = { chip: r.chip_id, ts: r.timestamp, ecu: e.ecu, vehicle: vehKey(x.vehicle, r.chip_id), error: e.error || null, dtcs: [] });
+        s.dtcs.push(...(e.dtcs || []));
+        if (r.timestamp > s.ts) s.ts = r.timestamp;
+        break;
+      }
+      case 'Routine': {
+        const k = (x.routine || '?') + '|' + (x.ecu || '');
+        let t = m.routines.get(k);
+        if (!t) m.routines.set(k, t = { routine: x.routine || '?', ecu: x.ecu || '', starts: 0, blocked: 0, rejected: 0, finishedOk: 0, finishedFail: 0, stops: 0, devices: new Set(), last: null });
+        t.devices.add(r.chip_id); t.last = r.timestamp;
+        if (x.action === 'start' && x.result === 'ok') t.starts++;
+        else if (x.result === 'blocked') { t.blocked++; for (const f of (x.failed || [])) m.blockers.set(f, (m.blockers.get(f) || 0) + 1); }
+        else if (x.action === 'start') t.rejected++;
+        else if (x.action === 'finished') { if (x.result === 'ok') t.finishedOk++; else t.finishedFail++; }
+        else if (x.action === 'stop') t.stops++;
+        d.routines++;
+        break;
+      }
+      case 'Parameter Write':
+        m.writes.push({ ts: r.timestamp, chip: r.chip_id, vehicle: vehKey(x.vehicle, r.chip_id), ecu: x.ecu, parameter: x.parameter, result: x.result, request: x.request });
+        d.writes++;
+        break;
+      case 'Fault Codes Cleared':
+        m.clears.push({ ts: r.timestamp, chip: r.chip_id, vehicle: vehKey(x.vehicle, r.chip_id), kind: x.kind, ok: x.ok, failed: x.failed, before: x.before || [] });
+        break;
+      case 'Feature Usage': {
+        const u = m.usage;
+        for (const [k, v] of Object.entries(x.pages || {})) u.pages[k] = (u.pages[k] || 0) + (+v || 0);
+        for (const [k, v] of Object.entries(x.liveDataValues || {})) u.liveDataValues[k] = (u.liveDataValues[k] || 0) + (+v || 0);
+        for (const k of ['liveData', 'trafficSessions', 'trafficSeconds', 'recordings', 'reports', 'languageSwitches']) u[k] += +x[k] || 0;
+        break;
+      }
+    }
+  }
+  // Letzter Stand je Fahrzeug + Steuergeraet
+  for (const s of snapParts.values()) {
+    const v = veh(s.vehicle);
+    v.devices.add(s.chip);
+    if (!v.first || s.ts < v.first) v.first = s.ts;
+    if (!v.last || s.ts > v.last) v.last = s.ts;
+    const cur = v.faults.get(s.ecu);
+    if (!cur || s.ts >= cur.ts) v.faults.set(s.ecu, s);
+  }
+  for (const v of m.vehicles.values()) {
+    for (const s of v.faults.values()) {
+      for (const x of s.dtcs) {
+        const k = s.ecu + '|' + x.code;
+        let t = m.dtcs.get(k);
+        if (!t) m.dtcs.set(k, t = { ecu: s.ecu, code: x.code, title: x.title || x.code, vehicles: new Set(), devices: new Set(), active: 0, total: 0, last: null, cases: [] });
+        t.vehicles.add(v.key); t.devices.add(s.chip); t.total++;
+        if (x.status === 'Active') t.active++;
+        if (!t.last || s.ts > t.last) t.last = s.ts;
+        t.cases.push({ vehicle: v.key, chip: s.chip, ts: s.ts, status: x.status, statusByte: x.statusByte, env: x.env || {} });
+      }
+    }
+  }
+  return m;
+}
+
+// ---------------------------------------------------------------- Darstellung
+const FEATURES_LEGACY = [
+  ['Parameter geschrieben (alt)', r => r.logtype === 'DiagData: ParameterWriteSequence'],
+  ['Abgasfehler gelöscht (alt)', r => r.logtype === 'DiagData: DeleteEmissDTCSequence'],
+  ['Routinen gestartet (alt)', r => r.logtype === 'DiagData: RoutineStart'],
+  ['Datenbanken geladen', r => r.logtype === 'InfoMessage: HandleSetup()'],
+  ['Online-Updates', r => r.logtype === 'Online Update' && r.level !== 'error'],
+];
+const PAGE_NAMES = { home: 'Start', identification: 'Identifikation', livedata: 'Live-Daten', faultcodes: 'Fehlercodes', parameter: 'Parameter',
+                     routines: 'Routinen', traffic: 'CAN-Verkehr', setup: 'Einstellungen', network: 'Netzwerk' };
+function area(t) { return t.replace(/^(ErrorMessage|DiagData|InfoMessage|LicenseMessage):\s*/, '').replace(/\(\)$/, ''); }
+function signature(text) { return text.replace(/0x[0-9a-f]+/gi, '#').replace(/\b[0-9a-f]{6,}\b/gi, '#').replace(/\d+([.,]\d+)?/g, '#').slice(0, 160); }
+
+function render() {
+  renderOverview();
+  renderFaults();
+  renderVehicles();
+  renderRoutines();
+  renderDevices();
+  renderLog();
+}
+
+function renderOverview() {
+  const m = model;
+  const devs = [...m.devices.values()];
+  const errors = rows.filter(r => r.level === 'error');
+  const starts = rows.filter(r => r.logtype === 'Startup Message');
+  const recent = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const active7 = devs.filter(d => day(d.last) >= recent).length;
+  const vins = [...m.vehicles.values()].filter(v => v.vin).length;
+  const dtcActive = [...m.dtcs.values()].reduce((s, t) => s + t.active, 0);
+  const routineRuns = [...m.routines.values()].reduce((s, t) => s + t.starts, 0);
+  const k = [
+    ['Geräte', devs.length, active7 + ' in den letzten 7 Tagen aktiv'],
+    ['Gerätestarts', starts.length, devs.length ? 'Ø ' + (starts.length / devs.length).toLocaleString('de-DE', {maximumFractionDigits: 1}) + ' je Gerät' : ''],
+    ['Fahrzeuge', m.vehicles.size, vins + ' mit FIN'],
+    ['Aktive Fehlercodes', dtcActive, plural(m.dtcs.size, 'verschiedener Code', 'verschiedene Codes')],
+    ['Routinen gestartet', routineRuns, plural(m.writes.length, 'Parameter geschrieben', 'Parameter geschrieben')],
+    ['Fehler', errors.length, new Set(errors.map(r => r.chip_id)).size + ' Gerät(e) betroffen'],
+  ];
+  $('kpis').innerHTML = k.map(([l, v, n]) => `<div class="card kpi"><div class="label">${esc(l)}</div><div class="value">${fmt(v)}</div><div class="note">${esc(n)}</div></div>`).join('');
+
+  const dayList = [];
+  const span = days || Math.max(1, Math.min(365, Math.ceil((Date.now() - new Date(rows.length ? day(rows[rows.length - 1].timestamp) : Date.now())) / 864e5) + 1));
+  for (let i = span - 1; i >= 0; i--) dayList.push(new Date(Date.now() - i * 864e5).toISOString().slice(0, 10));
+  const count = (list) => { const c = Object.fromEntries(dayList.map(d => [d, 0])); for (const r of list) { const d = day(r.timestamp); if (d in c) c[d]++; } return dayList.map(d => [d, c[d]]); };
+  bars($('chart-starts'), count(starts), 'Gerätestarts', false);
+  bars($('chart-errors'), count(errors), 'Fehler', true);
+
+  // Funktionen: neue Nutzungsstatistik + Einzelereignisse + Altbestand
+  const u = m.usage;
+  const feat = [];
+  for (const [p, n] of Object.entries(u.pages)) feat.push(['Seite ' + (PAGE_NAMES[p] || p), n]);
+  feat.push(['Live-Daten-Werte gestartet', u.liveData], ['CAN-Verkehr geöffnet', u.trafficSessions], ['CAN-Aufnahmen', u.recordings],
+            ['PDF-Berichte', u.reports], ['Routinen gestartet', routineRuns], ['Parameter geschrieben', m.writes.length],
+            ['Fehlercodes gelöscht', m.clears.length]);
+  for (const [n, f] of FEATURES_LEGACY) feat.push([n, rows.filter(f).length]);
+  hbars($('features'), feat.filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]), false, 'Keine Vorgänge im Zeitraum');
+
+  const top = [...m.dtcs.values()].sort((a, b) => b.vehicles.size - a.vehicles.size || b.active - a.active).slice(0, 10);
+  hbars($('top-dtcs'), top.map(t => [t.ecu + ' ' + t.title, t.vehicles.size, plural(t.vehicles.size, 'Fahrzeug', 'Fahrzeuge'), 'dtc:' + t.ecu + '|' + t.code]), false, 'Noch keine Fehlerspeicher-Daten');
+
+  const ver = new Map();
+  for (const d of devs) ver.set(d.sw || 'unbekannt', (ver.get(d.sw || 'unbekannt') || 0) + 1);
+  hbars($('versions'), [...ver.entries()].sort((a, b) => b[0].localeCompare(a[0], 'de', {numeric: true})), false, 'Keine Geräte');
+
+  const byType = new Map();
+  for (const r of errors) { const t = area(r.logtype); const e = byType.get(t) || { n: 0, chips: new Set() }; e.n++; e.chips.add(r.chip_id); byType.set(t, e); }
+  hbars($('problems'), [...byType.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 10).map(([t, e]) => [t, e.n, plural(e.chips.size, 'Gerät', 'Geräte')]), true, 'Keine Fehler im Zeitraum');
+}
+
+function renderFaults() {
+  const m = model;
+  const ecus = [...new Set([...m.dtcs.values()].map(t => t.ecu))].sort((a, b) => (ECU_ORDER.indexOf(a) + 99) % 99 - (ECU_ORDER.indexOf(b) + 99) % 99 || a.localeCompare(b));
+  fill($('fc-ecu'), 'Alle Steuergeräte', ecus);
+  const ecu = $('fc-ecu').value, onlyActive = $('fc-status').value === 'Active', q = $('fc-text').value.toLowerCase();
+  const list = [...m.dtcs.values()]
+    .filter(t => (!ecu || t.ecu === ecu) && (!onlyActive || t.active > 0) && (!q || (t.code + ' ' + t.title).toLowerCase().includes(q)))
+    .sort((a, b) => b.vehicles.size - a.vehicles.size || b.active - a.active || a.code.localeCompare(b.code));
+  $('fc-table').innerHTML = '<thead><tr><th>Steuergerät</th><th>Code</th><th>Beschreibung</th><th class="num">Fahrzeuge</th><th class="num">Aktiv</th><th class="num opt">Geräte</th><th class="opt">Zuletzt</th></tr></thead><tbody>' +
+    (list.length ? list.map(t => `<tr class="click" data-open="dtc:${esc(t.ecu + '|' + t.code)}">
+      <td>${esc(t.ecu)}</td><td class="mono">${esc(t.code)}</td><td class="msg">${esc(t.title.replace(new RegExp('^' + t.code + '\\s*'), ''))}</td>
+      <td class="num">${fmt(t.vehicles.size)}</td><td class="num">${t.active ? '<span class="badge error">' + fmt(t.active) + '</span>' : '0'}</td>
+      <td class="num opt">${fmt(t.devices.size)}</td><td class="mono opt">${esc(wall(t.last))}</td></tr>`).join('')
+      : '<tr><td colspan="7" class="empty">Keine Fehlercodes – die Geräte melden den Fehlerspeicher ab Software 1.1.22</td></tr>') + '</tbody>';
+}
+
+function renderVehicles() {
+  const q = $('veh-text').value.toLowerCase();
+  const list = [...model.vehicles.values()]
+    .filter(v => !q || (v.key + ' ' + JSON.stringify(v.ident)).toLowerCase().includes(q))
+    .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+  const swOf = (v, ecu) => ((v.ident || {})[ecu] || {})['Software Version'] || '';
+  $('veh-table').innerHTML = '<thead><tr><th>Fahrzeug</th><th>Steuergeräte</th><th class="num">Aktive Fehler</th><th class="opt">Software</th><th class="opt">Geräte</th><th>Zuletzt</th></tr></thead><tbody>' +
+    (list.length ? list.map(v => {
+      const ecus = [...new Set([...Object.keys(v.ident || {}), ...v.faults.keys()])];
+      const act = [...v.faults.values()].reduce((s, f) => s + f.dtcs.filter(x => x.status === 'Active').length, 0);
+      return `<tr class="click" data-open="veh:${esc(v.key)}">
+        <td class="mono">${esc(v.key)}</td><td>${esc(ecus.join(', ') || '–')}</td>
+        <td class="num">${act ? '<span class="badge error">' + fmt(act) + '</span>' : '0'}</td>
+        <td class="opt msg">${esc(ecus.map(e => swOf(v, e) && e + ' ' + swOf(v, e)).filter(Boolean).join(' · ') || '–')}</td>
+        <td class="opt mono">${esc([...v.devices].join(', '))}</td><td class="mono">${esc(wall(v.last))}</td></tr>`;
+    }).join('') : '<tr><td colspan="6" class="empty">Noch keine Fahrzeugdaten – ab Software 1.1.22</td></tr>') + '</tbody>';
+}
+
+function renderRoutines() {
+  const m = model;
+  const list = [...m.routines.values()].sort((a, b) => (b.starts + b.blocked) - (a.starts + a.blocked));
+  $('rt-table').innerHTML = '<thead><tr><th>Routine</th><th>Steuergerät</th><th class="num">Gestartet</th><th class="num">Gesperrt</th><th class="num">Ergebnis ok</th><th class="num">Ergebnis Fehler</th><th class="num opt">Gestoppt</th><th class="num opt">Geräte</th><th class="opt">Zuletzt</th></tr></thead><tbody>' +
+    (list.length ? list.map(t => `<tr><td>${esc(t.routine)}</td><td>${esc(t.ecu)}</td><td class="num">${fmt(t.starts)}</td>
+      <td class="num">${t.blocked ? '<span class="badge blocked">' + fmt(t.blocked) + '</span>' : '0'}</td>
+      <td class="num">${t.finishedOk ? '<span class="badge ok">' + fmt(t.finishedOk) + '</span>' : '0'}</td>
+      <td class="num">${t.finishedFail + t.rejected ? '<span class="badge fail">' + fmt(t.finishedFail + t.rejected) + '</span>' : '0'}</td>
+      <td class="num opt">${fmt(t.stops)}</td><td class="num opt">${fmt(t.devices.size)}</td><td class="mono opt">${esc(wall(t.last))}</td></tr>`).join('')
+      : '<tr><td colspan="9" class="empty">Keine Routinen im Zeitraum</td></tr>') + '</tbody>';
+  hbars($('rt-blockers'), [...m.blockers.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10), false, 'Keine gesperrten Starts');
+  const kinds = { all: 'Alle Fehlercodes', emission: 'Abgasrelevante' };
+  const cl = new Map();
+  for (const c of m.clears) cl.set(kinds[c.kind] || c.kind || '?', (cl.get(kinds[c.kind] || c.kind || '?') || 0) + 1);
+  hbars($('clears'), [...cl.entries()], false, 'Keine Löschvorgänge');
+  const w = [...m.writes].reverse();
+  $('pw-table').innerHTML = '<thead><tr><th>Zeit</th><th>Gerät</th><th>Steuergerät</th><th>Parameter</th><th>Ergebnis</th><th class="opt">Fahrzeug</th></tr></thead><tbody>' +
+    (w.length ? w.slice(0, 300).map(x => `<tr><td class="mono">${esc(wall(x.ts))}</td><td><a class="chip" data-chip="${esc(x.chip)}">${esc(x.chip)}</a></td><td>${esc(x.ecu)}</td>
+      <td class="msg">${esc(x.parameter)}</td><td><span class="badge ${x.result === 'ok' ? 'ok' : 'fail'}">${esc(RESULT[x.result] || x.result)}</span></td><td class="mono opt">${esc(x.vehicle)}</td></tr>`).join('')
+      : '<tr><td colspan="6" class="empty">Keine Schreibvorgänge im Zeitraum</td></tr>') + '</tbody>';
+}
+
+function renderDevices() {
+  const devs = [...model.devices.values()].sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+  $('devices').innerHTML = '<thead><tr><th>Chip-ID</th><th>Software</th><th>Lizenz</th><th>Zuletzt</th><th class="num">Starts</th><th class="num">Fehler</th><th class="num opt">Fahrzeuge</th><th class="opt">Bedienung</th><th class="opt">Letzter Fehler</th></tr></thead><tbody>' +
+    (devs.length ? devs.map(d => `<tr class="click" data-chip="${esc(d.chip)}">
+      <td><a class="chip" data-chip="${esc(d.chip)}">${esc(d.chip)}</a></td><td class="mono">${esc(d.sw || '–')}</td><td>${esc(d.license || '–')}</td>
+      <td class="mono">${esc(wall(d.last))}</td><td class="num">${fmt(d.starts)}</td>
+      <td class="num">${d.errors ? '<span class="badge error">' + fmt(d.errors) + '</span>' : '0'}</td>
+      <td class="num opt">${fmt(d.vehicles.size)}</td>
+      <td class="opt msg">${esc([d.phone && d.phone + '× Handy', d.desktop && d.desktop + '× PC', d.workshopWifi && d.workshopWifi + '× Werkstatt-WLAN', d.deviceWifi && d.deviceWifi + '× Geräte-WLAN'].filter(Boolean).join(' · ') || '–')}</td>
+      <td class="opt msg">${d.lastError ? '<span class="mono">' + esc(wall(d.lastError.timestamp)) + '</span> ' + esc(d.lastError.text.slice(0, 120)) : '–'}</td></tr>`).join('')
+      : '<tr><td colspan="9" class="empty">Keine Geräte im Zeitraum</td></tr>') + '</tbody>';
+}
+
+function renderLog() {
+  const errors = rows.filter(r => r.level === 'error');
+  const sig = new Map();
+  for (const r of errors) { const s = signature(r.text); const e = sig.get(s) || { n: 0, chips: new Set(), last: r, type: area(r.logtype) }; e.n++; e.chips.add(r.chip_id); if (r.timestamp > e.last.timestamp) e.last = r; sig.set(s, e); }
+  const sigs = [...sig.values()].sort((a, b) => b.n - a.n).slice(0, 100);
+  $('messages').innerHTML = '<thead><tr><th class="num">Anzahl</th><th class="num">Geräte</th><th>Bereich</th><th>Meldung (Beispiel)</th><th class="opt">Zuletzt</th></tr></thead><tbody>' +
+    (sigs.length ? sigs.map(e => `<tr><td class="num">${fmt(e.n)}</td><td class="num">${e.chips.size}</td><td>${esc(e.type)}</td><td class="msg">${esc(e.last.text.slice(0, 300))}</td><td class="mono opt">${esc(wall(e.last.timestamp))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Keine Fehler im Zeitraum</td></tr>') + '</tbody>';
+  fill($('flt-chip'), 'Alle Geräte', [...model.devices.keys()].sort());
+  fill($('flt-type'), 'Alle Typen', [...new Set(rows.map(r => r.logtype))].sort());
+  renderEvents();
+}
+function fill(sel, first, values) {
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">${esc(first)}</option>` + values.map(v => `<option>${esc(v)}</option>`).join('');
+  if (values.includes(cur)) sel.value = cur;
+}
+function filtered() {
+  const chip = $('flt-chip').value, lvl = $('flt-level').value, type = $('flt-type').value, q = $('flt-text').value.toLowerCase();
+  return rows.filter(r => (!chip || r.chip_id === chip) && (!lvl || r.level === lvl) && (!type || r.logtype === type) && (!q || (r.text + ' ' + (r.ev ? r.raw : '')).toLowerCase().includes(q)));
+}
+function renderEvents() {
+  const list = filtered();
+  const shown = list.slice(0, 500);
+  $('events').innerHTML = '<thead><tr><th>Zeit (MEZ)</th><th>Gerät</th><th class="opt">Level</th><th>Typ</th><th>Inhalt</th></tr></thead><tbody>' +
+    (shown.length ? shown.map(r => `<tr${r.ev ? ` class="click" data-open="ev:${r.i}"` : ''}><td class="mono">${esc(wall(r.timestamp))}</td><td><a class="chip" data-chip="${esc(r.chip_id)}">${esc(r.chip_id)}</a></td><td class="opt"><span class="badge ${esc(r.level)}">${esc(r.level)}</span></td><td>${esc(area(r.logtype))}</td><td class="msg">${esc(r.text.slice(0, 400))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Keine Einträge</td></tr>') + '</tbody>';
+  $('events-note').textContent = list.length > 500 ? `Zeige 500 von ${fmt(list.length)} – Filter eingrenzen oder CSV exportieren.` : `${fmt(list.length)} Einträge`;
+}
+
+// ---------------------------------------------------------------- Detailansichten
+function openDetail(title, html) {
+  $('detail-title').textContent = title;
+  $('detail-body').innerHTML = html;
+  $('detail').classList.remove('hidden');
+  $('detail').querySelector('.panel').scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+  $('detail-close').focus();
+}
+function closeDetail() { $('detail').classList.add('hidden'); document.body.style.overflow = ''; }
+function kv(obj) {
+  const e = Object.entries(obj || {});
+  return e.length ? '<dl class="kv">' + e.map(([k, v]) => `<dt>${esc(k.replace(/_/g, ' '))}</dt><dd>${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</dd>`).join('') + '</dl>' : '<p class="status">Keine Umgebungsdaten</p>';
+}
+function openDtc(key) {
+  const t = model.dtcs.get(key);
+  if (!t) return;
+  const cases = [...t.cases].sort((a, b) => b.ts.localeCompare(a.ts));
+  // Haeufige Werte der Umgebungsdaten ueber alle Faelle (nur Felder mit wenigen verschiedenen Werten)
+  const dist = new Map();
+  for (const c of cases) for (const [k, v] of Object.entries(c.env || {})) { const d = dist.get(k) || new Map(); d.set(v, (d.get(v) || 0) + 1); dist.set(k, d); }
+  const interesting = [...dist.entries()].filter(([, d]) => d.size > 1 && d.size <= Math.max(3, cases.length)).slice(0, 12);
+  openDetail(t.ecu + ' ' + t.code, `
+    <div class="card"><h2>${esc(t.title.replace(new RegExp('^' + t.code + '\\s*'), ''))}</h2>
+      <p class="sub">${plural(t.vehicles.size, 'Fahrzeug', 'Fahrzeuge')} · ${plural(t.devices.size, 'Gerät', 'Geräte')} · ${fmt(t.active)} von ${fmt(t.total)} aktiv · zuletzt ${esc(wall(t.last))}</p></div>
+    ${interesting.length > 0 && cases.length > 1 ? `<div class="card"><h2>Unterschiede zwischen den Fällen</h2><p class="sub">Umgebungswerte, die sich zwischen den Fahrzeugen unterscheiden</p>
+      ${interesting.map(([k, d]) => `<div style="margin:6px 0"><b style="font-size:13px">${esc(k.replace(/_/g, ' '))}</b><div class="status">${[...d.entries()].sort((a, b) => b[1] - a[1]).map(([v, n]) => esc(v) + ' (' + n + '×)').join(' · ')}</div></div>`).join('')}</div>` : ''}
+    <div class="card"><h2>Fälle</h2><p class="sub">Letzter gemeldeter Stand je Fahrzeug – aufklappen für alle Umgebungsdaten</p>
+      ${cases.map((c, i) => `<details class="occ"${i === 0 ? ' open' : ''}><summary><span class="mono">${esc(c.vehicle)}</span>
+        <span class="badge ${c.status === 'Active' ? 'error' : 'info'}">${esc(c.status === 'Active' ? 'aktiv' : c.status === 'Passive' ? 'passiv' : (c.status || '?'))}</span>
+        <span class="status">Gerät ${esc(c.chip)} · ${esc(wall(c.ts))}${c.statusByte ? ' · Status 0x' + esc(c.statusByte) : ''}</span></summary>${kv(c.env)}</details>`).join('')}</div>`);
+}
+function openVehicle(key) {
+  const v = model.vehicles.get(key);
+  if (!v) return;
+  const ecus = [...new Set([...Object.keys(v.ident || {}), ...v.faults.keys()])].sort((a, b) => (ECU_ORDER.indexOf(a) + 99) % 99 - (ECU_ORDER.indexOf(b) + 99) % 99);
+  openDetail(v.key, `
+    <div class="card"><p class="sub" style="margin:0">${v.wmi ? 'Hersteller-Kennung ' + esc(v.wmi) + ' · ' : ''}Geräte ${esc([...v.devices].join(', '))} · zuerst ${esc(wall(v.first))} · zuletzt ${esc(wall(v.last))}</p></div>
+    ${ecus.map(e => {
+      const f = v.faults.get(e);
+      return `<div class="card"><h2>${esc(e)}</h2>
+        ${f ? `<p class="sub">Fehlerspeicher ${esc(wall(f.ts))}: ${f.error ? 'nicht lesbar' : plural(f.dtcs.length, 'Fehlercode', 'Fehlercodes')}</p>
+          ${f.dtcs.length ? '<table><tbody>' + f.dtcs.map(x => `<tr class="click" data-open="dtc:${esc(e + '|' + x.code)}"><td class="mono">${esc(x.code)}</td><td class="msg">${esc((x.title || '').replace(new RegExp('^' + x.code + '\\s*'), ''))}</td><td><span class="badge ${x.status === 'Active' ? 'error' : 'info'}">${x.status === 'Active' ? 'aktiv' : 'passiv'}</span></td></tr>`).join('') + '</tbody></table>' : ''}` : ''}
+        ${v.ident && v.ident[e] ? '<p class="sub" style="margin-top:12px">Identifikation ' + esc(wall(v.identTs)) + '</p>' + kv(v.ident[e]) : ''}</div>`;
+    }).join('')}`);
+}
+function openEvent(i) {
+  const r = rows[i];
+  if (!r) return;
+  openDetail(r.logtype + ' · ' + r.chip_id, `<div class="card"><p class="sub">${esc(wall(r.timestamp))} · Software ${esc(r.sw || '–')} · Sitzung ${esc(r.session || '–')}${r.ev && r.ev.lang ? ' · Sprache ' + esc(r.ev.lang) : ''}</p>
+    <p>${esc(r.text)}</p><pre class="json">${esc(JSON.stringify(r.ev, null, 2))}</pre></div>`);
+}
+
+// ---------------------------------------------------------------- Diagramme
+const tip = $('tip');
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.display = 'block';
+  const x = Math.max(window.scrollX + 8, Math.min(e.pageX + 12, window.scrollX + innerWidth - tip.offsetWidth - 8));
+  tip.style.left = x + 'px'; tip.style.top = (e.pageY - tip.offsetHeight - 12) + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
+
+function bars(el, data, label, isErr) {
+  if (!data.length || data.every(d => d[1] === 0)) { el.innerHTML = '<div class="empty">Keine Daten im Zeitraum</div>'; return; }
+  const W = 600, H = 200, L = 34, B = 22, T = 8;
+  const max = Math.max(1, ...data.map(d => d[1]));
+  const nice = (m) => { const p = Math.pow(10, Math.floor(Math.log10(m))); for (const f of [1, 2, 5, 10]) if (f * p >= m) return f * p; return m; };
+  const top = nice(max);
+  const bw = (W - L) / data.length;
+  const gap = Math.min(2, bw * 0.2);
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)} pro Tag">`;
+  for (const t of [0, top / 2, top]) s += `<line class="gridline" x1="${L}" x2="${W}" y1="${y(t)}" y2="${y(t)}"/><text x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${fmt(Math.round(t))}</text>`;
+  const every = Math.ceil(data.length / 7);
+  data.forEach(([d, v], i) => {
+    const x = L + i * bw + gap / 2, w = Math.max(1, bw - gap), r = Math.min(4, w / 2);
+    if (v > 0) { const h = H - B - y(v); const rr = Math.min(r, h); s += `<path class="bar${isErr ? ' err' : ''}" data-i="${i}" d="M${x},${H - B} v${-(h - rr)} q0,${-rr} ${rr},${-rr} h${w - 2 * rr} q${rr},0 ${rr},${rr} V${H - B} z"/>`; }
+    s += `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/>`;
+    if (i % every === 0) s += `<text x="${L + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${d.slice(8, 10)}.${d.slice(5, 7)}.</text>`;
+  });
+  s += `<line class="axis" x1="${L}" x2="${W}" y1="${H - B}" y2="${H - B}"/></svg>`;
+  el.innerHTML = s;
+  // Pointer-Ereignisse: Maus und Finger (Handy: antippen)
+  el.querySelectorAll('.hit').forEach(h => {
+    const show = (e) => { const [d, v] = data[+h.dataset.i]; showTip(e, `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)} · ${esc(label)}: <b>${fmt(v)}</b>`); };
+    h.addEventListener('pointermove', show);
+    h.addEventListener('pointerdown', show);
+    h.addEventListener('pointerleave', hideTip);
+  });
+}
+function hbars(el, list, isErr, emptyText) {
+  if (!list.length) { el.innerHTML = `<div class="empty">${esc(emptyText)}</div>`; return; }
+  const max = Math.max(...list.map(x => x[1]));
+  el.innerHTML = list.map(([n, v, extra, open]) => `<div class="hbar${open ? ' click' : ''}"${open ? ` data-open="${esc(open)}" style="cursor:pointer"` : ''} title="${esc(n)}${extra ? ' · ' + esc(extra) : ''}"><span class="name">${esc(n)}</span><span class="track${isErr ? ' err' : ''}" style="width:${Math.max(1, v / max * 100)}%"></span><span class="n">${fmt(v)}</span></div>`).join('');
+}
+
+// ---------------------------------------------------------------- CSV
+function csv() {
+  const list = filtered();
+  const q = (s) => '"' + String(s ?? '').replace(/"/g, '""') + '"';
+  const text = '﻿Zeit;Geraet;Level;Typ;Inhalt;Rohdaten\n' + list.map(r => [wall(r.timestamp), r.chip_id, r.level, r.logtype, r.text, r.ev ? r.raw : ''].map(q).join(';')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'startrace-logs-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+}
+
+// ---------------------------------------------------------------- Bedienung
+function showTab(name) {
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.dataset.view !== name));
+  cfg.tab = name; save();
+  window.scrollTo({ top: 0 });
+}
+function setRange(d) {
+  days = d; cfg.days = d; save();
+  document.querySelectorAll('#range button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.days === d)));
+}
+document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+document.querySelectorAll('#range button').forEach(b => b.addEventListener('click', () => { setRange(+b.dataset.days); run(); }));
+$('reload').addEventListener('click', run);
+$('logout').addEventListener('click', logout);
+$('csv').addEventListener('click', csv);
+['flt-chip', 'flt-level', 'flt-type'].forEach(id => $(id).addEventListener('change', renderEvents));
+$('flt-text').addEventListener('input', renderEvents);
+['fc-ecu', 'fc-status'].forEach(id => $(id).addEventListener('change', renderFaults));
+$('fc-text').addEventListener('input', renderFaults);
+$('veh-text').addEventListener('input', renderVehicles);
+$('detail-close').addEventListener('click', closeDetail);
+$('detail').addEventListener('click', e => { if (e.target === $('detail')) closeDetail(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('detail').classList.contains('hidden')) closeDetail(); });
+document.addEventListener('click', e => {
+  const chip = e.target.closest('a.chip, tr[data-chip]');
+  if (chip && model) {
+    closeDetail();
+    showTab('log');
+    $('flt-chip').value = chip.dataset.chip; renderEvents();
+    return;
+  }
+  const open = e.target.closest('[data-open]');
+  if (!open || !model) return;
+  const [kind, ...rest] = open.dataset.open.split(':');
+  const key = rest.join(':');
+  if (kind === 'dtc') openDtc(key);
+  else if (kind === 'veh') openVehicle(key);
+  else if (kind === 'ev') openEvent(+key);
+});
+$('do-login').addEventListener('click', async () => {
+  $('login-err').textContent = '';
+  const url = $('f-url').value.trim(), key = $('f-key').value.trim();
+  try {
+    session = await login(url, key, $('f-mail').value.trim(), $('f-pass').value);
+    cfg.url = url; cfg.key = key; cfg.mail = $('f-mail').value.trim(); cfg.keep = $('f-keep').checked; save();
+    try { sessionStore().setItem(LS + '-s', JSON.stringify(session)); } catch (_) {}
+    $('f-pass').value = '';
+    start();
+  } catch (err) { $('login-err').textContent = err.message; }
+});
+$('f-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('do-login').click(); });
+
+async function run() {
+  try { await load(); }
+  catch (err) { $('status').textContent = err.message; if (/401|JWT|abgelaufen/.test(err.message)) logout(); }
+}
+function start() {
+  $('login').classList.add('hidden'); $('app').classList.remove('hidden'); $('tabs').classList.remove('hidden');
+  showTab(cfg.tab || 'overview');
+  run();
+}
+
+// ---------------------------------------------------------------- App (PWA)
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; $('install').style.display = 'inline-block'; });
+$('install').addEventListener('click', async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; $('install').style.display = 'none'; });
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+// Zurueck aus dem Hintergrund (App wieder geoeffnet): nach 10 Minuten neu laden
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (session && hiddenAt && Date.now() - hiddenAt > 600000) run();
+});
+
+setRange(days);
+if (cfg.url) $('f-url').value = cfg.url;
+if (cfg.key) $('f-key').value = cfg.key;
+if (cfg.mail) $('f-mail').value = cfg.mail;
+if (cfg.keep === false) $('f-keep').checked = false;
+try { session = JSON.parse(sessionStorage.getItem(LS + '-s') || localStorage.getItem(LS + '-s') || 'null'); } catch (_) { session = null; }
+if (session) start(); else $('login').classList.remove('hidden');
+</script>
+</body>
+</html>
