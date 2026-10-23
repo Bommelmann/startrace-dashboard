@@ -427,8 +427,30 @@ async function load() {
   }
   rows = all.map((x, i) => Object.assign(parseRow(x), { i }));
   $('status').textContent = fmt(rows.length) + ' Einträge' + (all.length >= 50000 ? ' (gekappt)' : '') + ' · ' + new Date().toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'});
+  showEmptyHint(rows.length === 0);
   model = buildModel(rows);
   render();
+}
+
+// Supabase antwortet mit [] statt mit einem Fehler, wenn die Lese-Regel (RLS) nicht auf das
+// angemeldete Konto passt - fuer den Nutzer sieht das aus wie "keine Daten". Daher erklaeren.
+function showEmptyHint(show) {
+  let el = $('empty-hint');
+  if (!show) { if (el) el.remove(); return; }
+  if (el) return;
+  el = document.createElement('div');
+  el.id = 'empty-hint';
+  el.className = 'card';
+  el.style.marginBottom = '16px';
+  el.innerHTML = `<h2>Keine Einträge erhalten</h2>
+    <p class="sub">Die Anmeldung hat geklappt, aber Supabase liefert für dieses Konto keine Zeilen${days ? ' im gewählten Zeitraum' : ''}. Häufigste Ursachen:</p>
+    <ol class="msg" style="margin:0;padding-left:20px">
+      <li><b>Lese-Regel fehlt:</b> <span class="mono">tools/supabase/dashboard_access.sql</span> im SQL-Editor ausführen.</li>
+      <li><b>Andere E-Mail:</b> Angemeldet als <span class="mono">${esc(cfg.mail || '?')}</span> – diese E-Mail muss in der Liste der SQL-Datei stehen. Das Skript ersetzt die Regel; wer es mit nur einer anderen E-Mail ausführt, sperrt alle übrigen aus.</li>
+      <li><b>Zeitraum:</b> oben „Alles“ wählen.</li>
+    </ol>
+    <p class="sub" style="margin-top:10px">Am Ende von <span class="mono">dashboard_access.sql</span> stehen drei Prüfabfragen dafür.</p>`;
+  $('app').prepend(el);
 }
 
 // ---------------------------------------------------------------- Ereignisse lesen
